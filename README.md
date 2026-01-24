@@ -1,128 +1,64 @@
-[![GNU ELPA](https://elpa.gnu.org/packages/avy.svg)](https://elpa.gnu.org/packages/avy.html)
-[![MELPA](https://melpa.org/packages/avy-badge.svg)](https://melpa.org/#/avy)
-[![MELPA Stable](https://stable.melpa.org/packages/avy-badge.svg)](https://stable.melpa.org/#/avy)
+# avy-flash
 
-## Introduction
+`avy-flash` is a high-performance, dynamic jumping package for Emacs, designed to mimic the behavior of [flash.nvim](https://github.com/folke/flash.nvim) as closely as possible. It is built on top of the powerful `avy` ecosystem but provides a completely different interaction model focused on non-blocking search and immediate visual feedback.
 
-`avy` is a GNU Emacs package for jumping to visible text using a char-based decision tree.  See also [ace-jump-mode](https://github.com/winterTTr/ace-jump-mode) and [vim-easymotion](https://github.com/Lokaltog/vim-easymotion) - `avy` uses the same idea.
+![avy-flash-demo](https://raw.githubusercontent.com/wiki/nloyola/avy/images/avy-goto-char-timer.png)
+> [!NOTE]
+> Demo image shows `avy-goto-char-timer` style, but `avy-flash` provides continuous feedback.
 
-![logo](https://raw.githubusercontent.com/wiki/abo-abo/avy/images/avy-avatar-1.png)
+## Key Features
 
-## Command overview
+- **Non-blocking Interaction**: Search matches and jump labels are updated instantly as you type. No need to wait for a timer or enter a fixed number of characters.
+- **Background Dimming**: The entire buffer is dimmed during a jump session to make matches and labels pop.
+- **Smart Labeling**: Labels are assigned dynamically based on proximity to the cursor.
+- **Disambiguation**: `avy-flash` automatically skips labels that would conflict with the continuation of your search pattern.
+- **Seamless Integration**: Works with all `avy` customization options and faces.
 
-You can bind some of these useful commands in your config.
+## Installation
 
-### `avy-goto-char`
-
-> Input one char, jump to it with a tree.
-
-```elisp
-(global-set-key (kbd "C-:") 'avy-goto-char)
-```
-
-After <kbd>C-: b</kbd>:
-
-![avy-goto-char](https://raw.githubusercontent.com/wiki/nloyola/avy/images/avy-goto-char.png)
-
-### `avy-goto-char-2`
-
-> Input two consecutive chars, jump to the first one with a tree.
-
-The advantage over the previous one is less candidates for the tree search. And it's not too inconvenient to enter two consecutive chars instead of one.
+Add `avy-flash.el` to your load path and require it:
 
 ```elisp
-(global-set-key (kbd "C-'") 'avy-goto-char-2)
+(require 'avy-flash)
 ```
 
-After <kbd>C-' bu</kbd>:
+## Quick Start
 
-![avy-goto-char-2](http://oremacs.com/download/avi-goto-char-2.png)
-
-### `avy-goto-char-timer`
-
-> Input an arbitrary amount of consecutive chars, jump to the first one with a tree.
-
-This is a more flexible version of `avy-goto-char-2`. First part works similarly to `isearch`: you type a query and it's highlighted dynamically on the screen.  When you stop typing for `avy-timeout-seconds` (0.5s by default), you'll be able to select one of the candidates with `avy`. As you're inputting characters, you can use `C-h` (backspace) or `DEL` (delete) to
-forget the last typed character and `RET` to end the input sequence immediately and select a candidate.
-
-### `avy-goto-line`
-
-> Input zero chars, jump to a line start with a tree.
+The primary entry point is `avy-flash-jump`. Bind it to a convenient key:
 
 ```elisp
-(global-set-key (kbd "M-g f") 'avy-goto-line)
+(global-set-key (kbd "M-s") 'avy-flash-jump)
 ```
 
-After <kbd>M-g f</kbd>:
+### How to use:
+1. Invoke `avy-flash-jump`.
+2. Start typing your search query.
+3. Observe matches being highlighted and labels appearing in real-time.
+4. If you see a label you want to jump to, press that key.
+5. If you want to refine your search, keep typing.
+6. Press `RET` to jump to the first/best match.
+7. Press `ESC` or `C-g` to cancel.
 
-![avy-goto-line](http://oremacs.com/download/avi-goto-line.png)
+## How it differs from standard `avy`
 
-You can actually replace the <kbd>M-g g</kbd> binding of `goto-line`, since if you enter a digit for `avy-goto-line`, it will switch to `goto-line` with that digit already entered.
+While `avy` provides excellent discrete jump commands, `avy-flash` unifies them into a single, fluid experience:
 
-### `avy-goto-word-1`
+| Feature | Standard `avy` (e.g., `avy-goto-char-timer`) | `avy-flash` |
+| :--- | :--- | :--- |
+| **Feedback Loop** | Waits for timeout or `RET` before labeling | Labels appear and update **instantly** |
+| **Focus** | Standard buffer visibility | **Aggressive dimming** of non-matches |
+| **Label Logic** | Static once generated | **Dynamic** - re-calculated on every keystroke |
+| **Interaction** | Modal (Search -> Label) | Fluid (Search/Label mixed) |
 
-> Input one char at word start, jump to a word start with a tree.
+## Customization
 
-```elisp
-(global-set-key (kbd "M-g w") 'avy-goto-word-1)
-```
+`avy-flash` respects most `avy` faces and settings. Additionally, you can customize:
 
-After <kbd>M-g wb</kbd>:
-
-![avy-goto-word-1](http://oremacs.com/download/avi-goto-word-1.png)
-
-### `avy-goto-word-0`
-
-> Input zero chars, jump to a word start with a tree.
-
-Compared to `avy-goto-word-1`, there are a lot more candidates. But at a least there's not need to input the initial char.
-
-```elisp
-(global-set-key (kbd "M-g e") 'avy-goto-word-0)
-```
-
-After <kbd>M-g e</kbd>:
-
-![avy-goto-word-0](http://oremacs.com/download/avi-goto-word-0.png)
-
-### Org-mode commands
-
-  * `avy-org-goto-heading-timer`: Type part of an Org heading.  When you stop typing, if only one heading on the screen matches, it will be jumped to; if more than one matches, you can jump to a heading with Avy.  This is like `avy-goto-char-timer` but for Org headings.
-  * `avy-org-refile-as-child`: With point in an entry you want to refile, run this command, select a heading with Avy, and the entry will be refiled as its first child heading.  This makes it quick and easy to refile to headings that are visible on-screen, even to other windows or buffers.
-
-### Other commands
-
-There are some more commands which you can explore yourself by looking at the code.
-
-### Bindings
-
-You add this to your config to bind some stuff:
-
-```elisp
-(avy-setup-default)
-(global-set-key (kbd "C-c C-j") 'avy-resume)
-```
-
-It will bind, for example, `avy-isearch` to <kbd>C-'</kbd> in `isearch-mode-map`, so that you can select one of the currently visible `isearch` candidates using `avy`.
-
-### Customization
-
-See the comprehensive custom variable list on [the defcustom wiki page](https://github.com/abo-abo/avy/wiki/defcustom).
-
-See how to write your own avy commands on [the custom-commands wiki page](https://github.com/abo-abo/avy/wiki/custom-commands).
+- `avy-flash-dim-face`: The face used to dim the background.
 
 ## Contributing
 
-### Copyright Assignment
+Before submitting changes, run `make compile` and `make test`.
 
-Avy is subject to the same [copyright assignment](http://www.gnu.org/prep/maintain/html_node/Copyright-Papers.html) policy as Emacs itself, org-mode, CEDET and other packages in [GNU ELPA](http://elpa.gnu.org/packages/). Any [legally significant](http://www.gnu.org/prep/maintain/html_node/Legally-Significant.html#Legally-Significant) contributions can only be accepted after the author has completed their paperwork. Please see [the request form](http://git.savannah.gnu.org/cgit/gnulib.git/tree/doc/Copyright/request-assign.future) if you want to proceed.
-
-The copyright assignment isn't a big deal, it just says that the copyright for your submitted changes to Emacs belongs to the FSF. This assignment works for all projects related to Emacs. To obtain it, you need to send one email, then send one letter (if you live in the US, it's digital), and wait for some time (in my case, I had to wait for one month).
-
-### Style
-
-The basic code style guide is to use `(setq indent-tabs-mode nil)`. It is provided for you in [.dir-locals.el](https://github.com/abo-abo/avy/blob/master/.dir-locals.el), please obey it.
-
-Before submitting the change, run `make compile` and `make test` to make sure that it doesn't introduce new compile warnings or test failures. Also run `make checkdoc` to see that your changes obey the documentation guidelines.
-
-Use your own judgment for the commit messages, I recommend a verbose style using `magit-commit-add-log`.
+---
+*Inspired by folke/flash.nvim*
