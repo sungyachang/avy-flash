@@ -1,10 +1,15 @@
 (require 'avy)
 (require 'cl-lib)
+(require 'face-remap) ;; FIXED: Explicitly require face-remap to silence compiler warnings
 
 ;; 1. Define the Dimming Face
-;; This ensures text loses color (becomes gray) but background stays transparent
 (defface avy-flash-dim-face
-  '((t (:foreground "gray40" :background unspecified :inherit nil)))
+  '((t (:foreground "gray40" 
+        :weight normal 
+        :slant normal
+        :underline nil
+        :strike-through nil
+        :background unspecified)))
   "Face used to dim the background text during avy-flash."
   :group 'avy)
 
@@ -14,38 +19,90 @@
 (defvar avy-flash--jump-table nil
   "Alist mapping keys to jump candidates (key . candidate).")
 
+(defvar avy-flash--remap-cookies nil)
+
+;; OPTIMIZATION: Define reusable list of keys.
 (defconst avy-flash--lower-keys
   (number-sequence ?a ?z))
 (defconst avy-flash--upper-keys
   (number-sequence ?A ?Z))
 
+;; OPTIMIZATION: Pre-define the list of faces to dim.
+(defconst avy-flash--faces-to-dim
+  '(font-lock-keyword-face
+    font-lock-string-face
+    font-lock-function-name-face
+    font-lock-variable-name-face
+    font-lock-type-face
+    font-lock-constant-face
+    font-lock-builtin-face
+    font-lock-comment-face
+    font-lock-doc-face
+    font-lock-warning-face
+    org-level-1 org-level-2 org-level-3 org-code org-block))
+
+;; OPTIMIZATION: Cache for propertized strings.
+(defvar avy-flash--string-cache (make-hash-table :test 'eql))
+
+(defun avy-flash--get-propertized-char (char)
+  "Return a cached propertized string for CHAR to avoid allocation."
+  (or (gethash char avy-flash--string-cache)
+      (puthash char 
+               (propertize (char-to-string char) 'face 'avy-lead-face)
+               avy-flash--string-cache)))
+
 (defun avy-flash--clean ()
-  "Clean up avy-flash specific overlays only."
-  (dolist (ov avy-flash--overlays)
-    (delete-overlay ov))
-  (setq avy-flash--overlays nil))
+  "Clean up avy-flash specific overlays and face remappings."
+  ;; OPTIMIZATION: mapc is slightly faster/cleaner for side effects than dolist
+  (mapc #'delete-overlay avy-flash--overlays)
+  (setq avy-flash--overlays nil)
+  
+  (mapc #'face-remap-remove-relative avy-flash--remap-cookies)
+  (setq avy-flash--remap-cookies nil))
+
+(defun avy-flash--dim-buffer ()
+  "Aggressively dim the buffer by remapping common font-lock faces to gray."
+  (push (face-remap-add-relative 'default 'avy-flash-dim-face)
+        avy-flash--remap-cookies)
+  
+  ;; OPTIMIZATION: Iterate over the constant list defined above.
+  (dolist (face avy-flash--faces-to-dim)
+    (when (facep face)
+      (push (face-remap-add-relative face 'avy-flash-dim-face)
+            avy-flash--remap-cookies))))
 
 (defun avy-flash--filter-keys (candidates)
   "Return (valid-lowers valid-uppers) excluding keys that extend CANDIDATES."
   (let ((forbidden-chars (make-hash-table :test 'eql)))
-    (dolist (cand candidates)
-      (let ((end (cdar cand))
-            (wnd (cdr cand)))
-        (with-current-buffer (window-buffer wnd)
-          (let ((char (char-after end)))
-            (when char
-              (puthash char t forbidden-chars))))))
+    ;; OPTIMIZATION: Group candidates by window to reduce context switching
+    (let ((candidates-by-window (make-hash-table :test 'eq)))
+      (dolist (cand candidates)
+        (let ((wnd (cdr cand)))
+          (push cand (gethash wnd candidates-by-window))))
+      
+      (maphash 
+       (lambda (wnd cands)
+         (with-current-buffer (window-buffer wnd)
+           (dolist (cand cands)
+             (let ((char (char-after (cdar cand))))
+               (when char
+                 (puthash char t forbidden-chars))))))
+       candidates-by-window))
     
+    ;; OPTIMIZATION: Use cl-delete-if (destructive) on copies
     (list 
-     (cl-remove-if (lambda (k) (gethash k forbidden-chars)) avy-flash--lower-keys)
-     (cl-remove-if (lambda (k) (gethash k forbidden-chars)) avy-flash--upper-keys))))
+     (cl-delete-if (lambda (k) (gethash k forbidden-chars)) 
+                   (copy-sequence avy-flash--lower-keys))
+     (cl-delete-if (lambda (k) (gethash k forbidden-chars)) 
+                   (copy-sequence avy-flash--upper-keys)))))
 
 (defun avy-flash--assign-labels (candidates valid-lowers valid-uppers)
   "Assign one key per candidate from VALID-LOWERS then VALID-UPPERS."
-  (let ((jump-table nil)
-        (keys (append valid-lowers valid-uppers)))
-    (while (and candidates keys)
-      (push (cons (pop keys) (pop candidates)) jump-table))
+  (let ((jump-table nil))
+    ;; OPTIMIZATION: Avoid append; iterate sequentially
+    (dolist (keys (list valid-lowers valid-uppers))
+      (while (and candidates keys)
+        (push (cons (pop keys) (pop candidates)) jump-table)))
     (nreverse jump-table)))
 
 (defun avy-flash--create-interaction-overlays (jump-table)
@@ -53,19 +110,19 @@
   (dolist (item jump-table)
     (let* ((key (car item))
            (cand (cdr item))
-           (beg (caar cand))
            (end (cdar cand))
            (wnd (cdr cand))
            (ov (make-overlay end end (window-buffer wnd))))
       (overlay-put ov 'window wnd)
       (overlay-put ov 'priority 200)
-      (overlay-put ov 'after-string (propertize (char-to-string key)
-                                                'face 'avy-lead-face))
+      ;; OPTIMIZATION: Use cached string
+      (overlay-put ov 'after-string (avy-flash--get-propertized-char key))
       (push ov avy-flash--overlays))))
 
 (defun avy-flash--update (search-str)
   "Update candidates, label assignments, and overlays."
-  (avy-flash--clean)
+  (mapc #'delete-overlay avy-flash--overlays)
+  (setq avy-flash--overlays nil)
   
   (let* ((case-fold-search nil)
          (candidates (if (string= search-str "")
@@ -75,13 +132,13 @@
                          (error nil)))))
     
     (when candidates
+      ;; OPTIMIZATION: Cache point once
       (let ((pt (point)))
         (setq candidates 
               (sort candidates (lambda (a b)
                                  (< (abs (- (caar a) pt))
                                     (abs (- (caar b) pt)))))))
       
-      ;; Create match highlights
       (dolist (cand candidates)
         (let* ((beg (caar cand))
                (end (cdar cand))
@@ -91,7 +148,6 @@
           (overlay-put ov 'face 'avy-goto-char-timer-face)
           (push ov avy-flash--overlays)))
 
-      ;; Calculate valid keys and assign labels
       (let* ((valid-pair (avy-flash--filter-keys candidates))
              (valid-lowers (car valid-pair))
              (valid-uppers (cadr valid-pair))
@@ -107,10 +163,7 @@
   "Jump to search matches with single-character dynamic labeling."
   (interactive)
   (let ((windows (avy-window-list))
-        (avy-all-windows nil)
-        (avy-background t)
-        ;; Force Avy to use our custom face for dimming
-        (avy-background-face 'avy-flash-dim-face)) 
+        (avy-all-windows nil))
     (avy-with avy-flash-jump
       (let ((search-str "")
             (candidates nil)
@@ -118,17 +171,7 @@
             (avy-flash--jump-table nil))
         (unwind-protect
             (progn
-              ;; Create dimming overlays
-              (avy--make-backgrounds windows)
-              
-              ;; FORCE PRIORITY: Iterate over all overlays in visible windows
-              ;; and boost the ones using our dimming face.
-              ;; This ensures they override syntax highlighting.
-              (dolist (wnd windows)
-                (with-current-buffer (window-buffer wnd)
-                  (dolist (ov (overlays-in (window-start wnd) (window-end wnd)))
-                    (when (eq (overlay-get ov 'face) 'avy-flash-dim-face)
-                      (overlay-put ov 'priority 100)))))
+              (avy-flash--dim-buffer)
 
               (while (not done)
                 (setq candidates (avy-flash--update search-str))
