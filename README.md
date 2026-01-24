@@ -2,10 +2,6 @@
 
 `avy-flash` is a high-performance, dynamic jumping package for Emacs, designed to mimic the behavior of [flash.nvim](https://github.com/folke/flash.nvim) as closely as possible. It is built on top of the powerful `avy` ecosystem but provides a completely different interaction model focused on non-blocking search and immediate visual feedback.
 
-![avy-flash-demo](https://raw.githubusercontent.com/wiki/nloyola/avy/images/avy-goto-char-timer.png)
-> [!NOTE]
-> Demo image shows `avy-goto-char-timer` style, but `avy-flash` provides continuous feedback.
-
 ## Key Features
 
 - **Non-blocking Interaction**: Search matches and jump labels are updated instantly as you type. No need to wait for a timer or enter a fixed number of characters.
