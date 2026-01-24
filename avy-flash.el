@@ -1,6 +1,13 @@
 (require 'avy)
 (require 'cl-lib)
 
+;; 1. Define the Dimming Face
+;; This ensures text loses color (becomes gray) but background stays transparent
+(defface avy-flash-dim-face
+  '((t (:foreground "gray40" :background unspecified :inherit nil)))
+  "Face used to dim the background text during avy-flash."
+  :group 'avy)
+
 (defvar avy-flash--overlays nil
   "List of current overlays.")
 
@@ -13,41 +20,28 @@
   (number-sequence ?A ?Z))
 
 (defun avy-flash--clean ()
-  "Clean up all overlays and state."
+  "Clean up avy-flash specific overlays only."
   (dolist (ov avy-flash--overlays)
     (delete-overlay ov))
-  (setq avy-flash--overlays nil)
-  (avy--done))
+  (setq avy-flash--overlays nil))
 
-(defun avy-flash--filter-keys (search-str)
-  "Return (valid-lowers valid-uppers) excluding keys that extend SEARCH-STR.
-Checks if `search-str + key` has matches in the VISIBLE text."
-  (let ((valid-lowers nil)
-        (valid-uppers nil))
+(defun avy-flash--filter-keys (candidates)
+  "Return (valid-lowers valid-uppers) excluding keys that extend CANDIDATES."
+  (let ((forbidden-chars (make-hash-table :test 'eql)))
+    (dolist (cand candidates)
+      (let ((end (cdar cand))
+            (wnd (cdr cand)))
+        (with-current-buffer (window-buffer wnd)
+          (let ((char (char-after end)))
+            (when char
+              (puthash char t forbidden-chars))))))
     
-    (dolist (key avy-flash--lower-keys)
-      (let* ((next-str (concat search-str (char-to-string key)))
-             ;; Force strict case for exclusion check relative to search string
-             (has-match (condition-case nil
-                            (avy--regex-candidates (regexp-quote next-str))
-                          (error nil))))
-        (unless has-match
-          (push key valid-lowers))))
-    
-    (dolist (key avy-flash--upper-keys)
-      (let* ((next-str (concat search-str (char-to-string key)))
-             (has-match (condition-case nil
-                            (avy--regex-candidates (regexp-quote next-str))
-                          (error nil))))
-        (unless has-match
-          (push key valid-uppers))))
-    
-    (list (nreverse valid-lowers) (nreverse valid-uppers))))
+    (list 
+     (cl-remove-if (lambda (k) (gethash k forbidden-chars)) avy-flash--lower-keys)
+     (cl-remove-if (lambda (k) (gethash k forbidden-chars)) avy-flash--upper-keys))))
 
 (defun avy-flash--assign-labels (candidates valid-lowers valid-uppers)
-  "Assign one key per candidate from VALID-LOWERS then VALID-UPPERS.
-Returns an alist of ((key . candidate) ...).
-Excess candidates are left unlabeled."
+  "Assign one key per candidate from VALID-LOWERS then VALID-UPPERS."
   (let ((jump-table nil)
         (keys (append valid-lowers valid-uppers)))
     (while (and candidates keys)
@@ -62,7 +56,6 @@ Excess candidates are left unlabeled."
            (beg (caar cand))
            (end (cdar cand))
            (wnd (cdr cand))
-           ;; Overlay at the END of the match
            (ov (make-overlay end end (window-buffer wnd))))
       (overlay-put ov 'window wnd)
       (overlay-put ov 'priority 200)
@@ -71,11 +64,10 @@ Excess candidates are left unlabeled."
       (push ov avy-flash--overlays))))
 
 (defun avy-flash--update (search-str)
-  "Update candidates, label assignments, and overlays.
-Strictly single-character labels."
+  "Update candidates, label assignments, and overlays."
   (avy-flash--clean)
   
-  (let* ((case-fold-search nil) ;; Strict case sensitivity
+  (let* ((case-fold-search nil)
          (candidates (if (string= search-str "")
                          nil
                        (condition-case nil
@@ -83,14 +75,13 @@ Strictly single-character labels."
                          (error nil)))))
     
     (when candidates
-      ;; Sort by distance from point
       (let ((pt (point)))
         (setq candidates 
               (sort candidates (lambda (a b)
                                  (< (abs (- (caar a) pt))
                                     (abs (- (caar b) pt)))))))
       
-      ;; Create match highlights (for ALL matches, labeled or not)
+      ;; Create match highlights
       (dolist (cand candidates)
         (let* ((beg (caar cand))
                (end (cdar cand))
@@ -101,12 +92,12 @@ Strictly single-character labels."
           (push ov avy-flash--overlays)))
 
       ;; Calculate valid keys and assign labels
-      (let* ((valid-pair (avy-flash--filter-keys search-str))
+      (let* ((valid-pair (avy-flash--filter-keys candidates))
              (valid-lowers (car valid-pair))
              (valid-uppers (cadr valid-pair))
              (jump-table (avy-flash--assign-labels candidates valid-lowers valid-uppers)))
         
-        (setq avy-flash--jump-table jump-table) ;; Expose for read-event loop
+        (setq avy-flash--jump-table jump-table)
         (avy-flash--create-interaction-overlays jump-table)))
     
     candidates))
@@ -115,15 +106,30 @@ Strictly single-character labels."
 (defun avy-flash-jump ()
   "Jump to search matches with single-character dynamic labeling."
   (interactive)
-  (let ((windows (avy-window-list)))
+  (let ((windows (avy-window-list))
+        (avy-all-windows nil)
+        (avy-background t)
+        ;; Force Avy to use our custom face for dimming
+        (avy-background-face 'avy-flash-dim-face)) 
     (avy-with avy-flash-jump
       (let ((search-str "")
             (candidates nil)
             (done nil)
-            (avy-flash--jump-table nil)) ; Bind dynamically
+            (avy-flash--jump-table nil))
         (unwind-protect
             (progn
+              ;; Create dimming overlays
               (avy--make-backgrounds windows)
+              
+              ;; FORCE PRIORITY: Iterate over all overlays in visible windows
+              ;; and boost the ones using our dimming face.
+              ;; This ensures they override syntax highlighting.
+              (dolist (wnd windows)
+                (with-current-buffer (window-buffer wnd)
+                  (dolist (ov (overlays-in (window-start wnd) (window-end wnd)))
+                    (when (eq (overlay-get ov 'face) 'avy-flash-dim-face)
+                      (overlay-put ov 'priority 100)))))
+
               (while (not done)
                 (setq candidates (avy-flash--update search-str))
                 (let* ((prompt (format "avy-flash: %s" 
@@ -132,38 +138,26 @@ Strictly single-character labels."
                                         (propertize search-str 'face 'avy-goto-char-timer-face))))
                        (event (read-event prompt)))
                   (cond
-                   ;; Escape / C-g
-                   ((memq event avy-escape-chars)
-                    (setq done t))
-                   
-                   ;; Backspace
+                   ((memq event avy-escape-chars) (setq done t))
                    ((memq event avy-del-last-char-by)
                     (setq search-str (substring search-str 0 (max 0 (1- (length search-str))))))
-                   
-                   ;; RET: jump to first match if exists
                    ((= event 13)
                     (when candidates
                       (setq done t)
                       (let ((res (car candidates)))
                         (funcall avy-pre-action res)
                         (funcall (or avy-action avy-action-oneshot 'avy-action-goto) (caar res)))))
-                   
-                   ;; Character input
                    ((characterp event)
                     (let ((match-entry (assoc event avy-flash--jump-table)))
                       (if match-entry
-                          ;; It IS a label -> Jump immediately
                           (let ((res (cdr match-entry)))
                             (setq done t)
                             (funcall avy-pre-action res)
                             (funcall (or avy-action avy-action-oneshot 'avy-action-goto) (caar res)))
-                        
-                        ;; Not a label -> Extend search
                         (setq search-str (concat search-str (string event))))))
-                   
                    (t (setq done t)))))
-              ;; Loop ended
               )
-          (avy-flash--clean))))))
+          (avy-flash--clean)
+          (avy--done))))))
 
 (provide 'avy-flash)
