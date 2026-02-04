@@ -40,7 +40,7 @@
                            'face '(:inherit avy-lead-face
                                             :family unspecified
                                             :height unspecified
-                                            :weight normal))
+                                            :weight bold))
                avy-flash--string-cache)))
 
 (defun avy-flash--clean ()
@@ -132,7 +132,7 @@
                (ov (make-overlay beg end (window-buffer wnd))))
           (overlay-put ov 'window wnd)
           (overlay-put ov 'priority 150)
-          (overlay-put ov 'face 'avy-goto-char-timer-face)
+          (overlay-put ov 'face '(:inherit avy-goto-char-timer-face :weight normal)) ;; Force normal weight
           (push ov avy-flash--overlays)))
 
       (let* ((valid-pair (avy-flash--filter-keys candidates))
