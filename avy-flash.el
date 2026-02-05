@@ -111,6 +111,7 @@
   (setq avy-flash--overlays nil)
 
   (let* ((case-fold-search nil)
+         (avy-all-windows t)
          (candidates (if (string= search-str "")
                          nil
                        (condition-case nil
@@ -149,8 +150,7 @@
 (defun avy-flash-jump ()
   "Jump to search matches with single-character dynamic labeling."
   (interactive)
-  (let ((windows (avy-window-list))
-        (avy-all-windows nil))
+  (let ((avy-all-windows t))
     (avy-with avy-flash-jump
       (let ((search-str "")
             (candidates nil)
