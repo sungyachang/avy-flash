@@ -51,10 +51,11 @@
   (setq avy-flash--dim-overlays nil))
 
 (defun avy-flash--dim-buffer ()
-  "Aggressively dim the buffer using high-priority overlays."
+  "Aggressively dim all visible windows in the current frame."
   (dolist (wnd (avy-window-list))
     (with-selected-window wnd
-      (let ((ov (make-overlay (window-start) (window-end))))
+      ;; Explicitly calculate start/end for THIS window
+      (let ((ov (make-overlay (window-start wnd) (window-end wnd t))))
         (overlay-put ov 'window wnd)
         (overlay-put ov 'face 'avy-flash-dim-face)
         (overlay-put ov 'priority 100)
@@ -106,11 +107,13 @@
           (push ov avy-flash--overlays))))))
 
 (defun avy-flash--update (search-str)
-  "Update candidates, label assignments, and overlays."
+  "Update candidates, label assignments, and overlays across all windows."
   (mapc #'delete-overlay avy-flash--overlays)
   (setq avy-flash--overlays nil)
 
   (let* ((case-fold-search nil)
+         ;; IMPORTANT: Bind avy-all-windows to t here to ensure
+         ;; avy--regex-candidates scans every window.
          (avy-all-windows t)
          (candidates (if (string= search-str "")
                          nil
@@ -120,6 +123,7 @@
 
     (when candidates
       (let ((pt (point)))
+        ;; Sort candidates by proximity to current point
         (setq candidates
               (sort candidates (lambda (a b)
                                  (< (abs (- (caar a) pt))
@@ -129,11 +133,11 @@
       (dolist (cand candidates)
         (let* ((beg (caar cand))
                (end (cdar cand))
-               (wnd (cdr cand))
+               (wnd (cdr cand)) ;; Use the window associated with the candidate
                (ov (make-overlay beg end (window-buffer wnd))))
           (overlay-put ov 'window wnd)
           (overlay-put ov 'priority 150)
-          (overlay-put ov 'face '(:inherit avy-background-face :weight normal)) ;; use avy-background-face, force normal weight
+          (overlay-put ov 'face '(:inherit avy-goto-char-timer-face :weight normal))
           (push ov avy-flash--overlays)))
 
       (let* ((valid-pair (avy-flash--filter-keys candidates))
@@ -150,7 +154,8 @@
 (defun avy-flash-jump ()
   "Jump to search matches with single-character dynamic labeling."
   (interactive)
-  (let ((avy-all-windows t))
+  (let ((windows (avy-window-list))
+        (avy-all-windows nil))
     (avy-with avy-flash-jump
       (let ((search-str "")
             (candidates nil)
